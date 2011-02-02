@@ -1,0 +1,38 @@
+#!/usr/bin/env python
+# -*- Python -*-
+# -*- coding: utf-8 -*-
+
+'''RTLogPlayer
+
+Copyright (C) 2011
+    Geoffrey Biggs
+    RT-Synthesis Research Group
+    Intelligent Systems Research Institute,
+    National Institute of Advanced Industrial Science and Technology (AIST),
+    Japan
+    All rights reserved.
+Licensed under the Eclipse Public License -v 1.0 (EPL)
+http://www.opensource.org/licenses/eclipse-1.0.txt
+
+Program file for the RTLogPlayer application.
+
+'''
+
+
+from PySide import QtGui
+import sys
+
+
+import rt_logplayer.rtlpwindow
+
+
+def main(argv):
+    app = QtGui.QApplication(argv)
+    w = rt_logplayer.rtlpwindow.RTLPWindow()
+    w.show()
+    return app.exec_()
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))
+
