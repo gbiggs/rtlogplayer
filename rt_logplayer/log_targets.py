@@ -38,10 +38,18 @@ class LogTargets(QtCore.QAbstractItemModel):
         raise NotImplemented
 
     def columnCount(self, parent):
+        if parent.isValid():
+            return 
         if self._channels[parent.row].num_targets == 0:
             return 1
         else:
             return 2
+
+    def index(self, row, col, parent):
+        
+
+    def parent(self):
+        pass
 
     def rowCount(self, parent):
         if parent.column == 0:
