@@ -22,6 +22,8 @@ Main window implementation.
 from PySide import QtCore
 from PySide import QtGui
 
+import log_targets
+
 
 class RTLPWindow(QtGui.QMainWindow):
     def __init__(self, parent=None):
@@ -90,38 +92,51 @@ class RTLPWindow(QtGui.QMainWindow):
         # Playback control
         self._play_btn = QtGui.QPushButton(self.style().standardIcon(
             QtGui.QStyle.SP_MediaPlay), '')
+        self._play_btn.setObjectName('PlayBtn')
         self._play_btn.setShortcut(QtGui.QKeySequence(
             QtCore.Qt.Key_Space))
         self._play_btn.setStatusTip(self.tr('Start playback'))
         self._play_btn.clicked.connect(self._playpause)
         self._stop_btn = QtGui.QPushButton(self.style().standardIcon(
             QtGui.QStyle.SP_MediaStop), '')
+        self._play_btn.setObjectName('StopBtn')
         self._stop_btn.setStatusTip(self.tr('Stop playback'))
         self._stop_btn.clicked.connect(self._stop)
         self._skip_back_btn = QtGui.QPushButton(self.style().standardIcon(
             QtGui.QStyle.SP_MediaSeekBackward), '')
+        self._play_btn.setObjectName('SkipBackBtn')
         self._skip_back_btn.setStatusTip(self.tr('Skip backwards 60s'))
         self._skip_back_btn.clicked.connect(self._skip_back)
         self._skip_fwd_btn = QtGui.QPushButton(self.style().standardIcon(
             QtGui.QStyle.SP_MediaSeekForward), '')
+        self._play_btn.setObjectName('SkipFwdBtn')
         self._skip_fwd_btn.setStatusTip(self.tr('Skip forwards 60s'))
         self._skip_fwd_btn.clicked.connect(self._skip_fwd)
         self._rewind_btn = QtGui.QPushButton(self.style().standardIcon(
             QtGui.QStyle.SP_MediaSkipBackward), '')
+        self._play_btn.setObjectName('RewindBtn')
         self._rewind_btn.setStatusTip(self.tr('Rewind to the start'))
         self._rewind_btn.clicked.connect(self._rewind)
 
+        self._log_targets = log_targets.LogTargets()
         # Target control
         self._chan_lbl = QtGui.QLabel("Channels")
         self._chan_lst = QtGui.QListView()
+        self._chan_lst.setObjectName('ChanLst')
+        self._chan_lst.setModel(self._log_targets)
         self._tgt_lbl = QtGui.QLabel("Targets")
         self._tgt_lst = QtGui.QListView()
+        self._tgt_lst.setObjectName('TgtLst')
         self._add_tgt_btn = QtGui.QPushButton('Add')
+        self._add_tgt_btn.setObjectName('AddTgtBtn')
         self._add_tgt_btn.setStatusTip(self.tr('Add a target'))
         self._add_tgt_btn.clicked.connect(self._add_target)
+        self._add_tgt_btn.setEnabled(False)
         self._rem_tgt_btn = QtGui.QPushButton('Remove')
+        self._rem_tgt_btn.setObjectName('RemTgtBtn')
         self._rem_tgt_btn.setStatusTip(self.tr('Remove a target'))
         self._rem_tgt_btn.clicked.connect(self._rem_target)
+        self._rem_tgt_btn.setEnabled(False)
 
     def _make_layout(self):
         central = QtGui.QWidget(self)
@@ -161,6 +176,7 @@ class RTLPWindow(QtGui.QMainWindow):
         vbox.addLayout(row3)
 
         self.setCentralWidget(central)
+        self.resize(600, 200)
 
     def _update_timeline(self, start, end):
         self._tl.setMinimum(start)
@@ -214,4 +230,7 @@ class RTLPWindow(QtGui.QMainWindow):
     def _rem_target(self):
         '''Remove a channel target.'''
         print 'Remove target'
+
+
+# vim: tw=79
 

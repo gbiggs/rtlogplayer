@@ -19,4 +19,5 @@ Thread object that manages the playback of data.
 '''
 
 
+# vim: tw=79
 
