@@ -121,7 +121,7 @@ class RTLPWindow(QtGui.QMainWindow):
         self._log_targets = log_targets.LogTargets()
         # Target control
         self._chan_lbl = QtGui.QLabel("Channels")
-        self._chan_lst = QtGui.QListView()
+        self._chan_lst = QtGui.QTreeView()
         self._chan_lst.setObjectName('ChanLst')
         self._chan_lst.setModel(self._log_targets)
         self._tgt_lbl = QtGui.QLabel("Targets")

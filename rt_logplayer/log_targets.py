@@ -25,7 +25,10 @@ from PySide import QtGui
 class LogTargets(QtCore.QAbstractItemModel):
     def __init__(self, parent=None):
         super(LogTargets, self).__init__(parent)
-        self._channels = []
+        self._channels = [Channel('chan1'), Channel('channel 2')]
+        self._channels[0].add_target(['/', 'localhost', 'blag.rtc'], 'in')
+        self._channels[0].add_target(['/', 'otherhost', 'blerg.rtc'], 'out')
+        self._channels[1].add_target(['/', 'localhost', 'blorg.rtc'], 'A_port')
 
     def clear(self):
         self.beginRemoveRows()
@@ -38,39 +41,70 @@ class LogTargets(QtCore.QAbstractItemModel):
         raise NotImplemented
 
     def columnCount(self, parent):
-        if parent.isValid():
-            return 
-        if self._channels[parent.row].num_targets == 0:
-            return 1
-        else:
-            return 2
+        return 1
 
     def index(self, row, col, parent):
-        
+        if not parent.isValid():
+            # Root
+            return self.createIndex(row, col, self._channels[row])
+        elif parent.internalPointer().parent == None:
+            # Channel
+            return self.createIndex(row, col, self._channels[parent.row()].targets[row])
+        else:
+            # Target (no children)
+            return QtCore.QModelIndex()
 
-    def parent(self):
-        pass
+    def parent(self, index):
+        if not index.isValid():
+            # Root
+            return QtCore.QModelIndex()
+        if index.internalPointer().parent:
+            # Target
+            chan = index.internalPointer().parent
+            return self.createIndex(self._channels.index(chan), 0, chan)
+        else:
+            # Channel
+            return QtCore.QModelIndex()
 
     def rowCount(self, parent):
-        if parent.column == 0:
-            print 'Returning num channels for rows'
+        if not parent.isValid():
+            # Root
             return len(self._channels)
+        elif parent.internalPointer().parent:
+            # Target
+            return 0
         else:
-            print 'Returning num_targets for rows'
-            return self._channels[row].num_targets
+            # Channel
+            return self._channels[parent.row()].num_targets
 
     def data(self, index, role):
+        if role == QtCore.Qt.StatusTipRole:
+            print 'data', index,
+        if not index.isValid():
+            return None
         if role == QtCore.Qt.DisplayRole:
-            return ['input{0}'.format(index.row())]
+            if index.internalPointer().parent:
+                # Target
+                return index.internalPointer().short
+            else:
+                # Channel
+                return index.internalPointer().name
         elif role == QtCore.Qt.StatusTipRole:
-            return ['stuff/input number {0}'.format(index.row())]
+            if index.internalPointer().parent:
+                # Target
+                print index.internalPointer().full
+                return index.internalPointer().full
+            else:
+                # Channel
+                print index.internalPointer().name
+                return index.internalPointer().name
         return None
 
     def headerData(self, sec, orientation, role):
-        if role == QtCore.Qt.DisplayRole and orientation = QtCore.Qt.Horizontal:
-            if sec = 0:
+        if role == QtCore.Qt.DisplayRole and orientation == QtCore.Qt.Horizontal:
+            if sec == 0:
                 return 'Channels'
-            if sec = 1:
+            if sec == 1:
                 return 'Targets'
         return None
 
@@ -80,24 +114,57 @@ class Channel:
         self._name = name
         self._targets = []
 
-    def add_target(self, target):
-        self._targets.append(target)
+    def __str__(self):
+        return self.name + '->' + str(self.targets)
 
-    def rem_target(self, target):
-        self._targets.remove(target)
+    def add_target(self, path, port):
+        self._targets.append(Target(path, port, self))
+
+    def rem_target(self, path, port):
+        self._targets.remove(Target(path, port, self))
+
+    @property
+    def name(self):
+        return self._name
 
     @property
     def num_targets(self):
         return len(self._targets)
 
+    @property
+    def parent(self):
+        return None
 
-def Target:
+    @property
+    def targets(self):
+        return self._targets
+
+
+class Target:
     def __init__(self, path, port, parent):
         self._path = path
         self._port = port
-        self.parent = parent
-        self.short = path[-1] + ':' + port
-        self.full = '/'.join(path) + ':' + port
+        self._parent = parent
+        self._short = path[-1] + ':' + port
+        self._full = '/'.join(path) + ':' + port
+
+    def __str__(self):
+        return self.full
+
+    def __repr__(self):
+        return self.full
+
+    @property
+    def parent(self):
+        return self._parent
+
+    @property
+    def short(self):
+        return self._short
+
+    @property
+    def full(self):
+        return self._full
 
 
 # vim: tw=79
