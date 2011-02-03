@@ -19,10 +19,14 @@ Main window implementation.
 '''
 
 
+import math
 from PySide import QtCore
 from PySide import QtGui
 
+import ilog
 import log_targets
+import simpkl_log
+
 
 
 class RTLPWindow(QtGui.QMainWindow):
@@ -43,6 +47,14 @@ class RTLPWindow(QtGui.QMainWindow):
             QtGui.QStyle.SP_DialogOpenButton))
         self._open_act.triggered.connect(self._open_log)
 
+        self._close_act = QtGui.QAction(self.tr('&Close'), self)
+        self._close_act.setShortcuts(QtGui.QKeySequence.Close)
+        self._close_act.setStatusTip(self.tr('Close the log file'))
+        self._close_act.setIcon(self.style().standardIcon(
+            QtGui.QStyle.SP_DialogCloseButton))
+        self._close_act.triggered.connect(self._close_log)
+        self._close_act.setEnabled(False)
+
         self._exit_act = QtGui.QAction(self.tr('E&xit'), self)
         self._exit_act.setShortcuts(QtGui.QKeySequence.Quit)
         self._exit_act.setStatusTip(self.tr('Exit RTLogPlayer'))
@@ -57,11 +69,13 @@ class RTLPWindow(QtGui.QMainWindow):
         self._log_info_act.setIcon(self.style().standardIcon(
             QtGui.QStyle.SP_MessageBoxInformation))
         self._log_info_act.triggered.connect(self._show_log_info)
+        self._log_info_act.setEnabled(False)
 
     def _make_bars(self):
         self._tb = self.addToolBar(self.tr('Log'))
         self._tb.setObjectName('Toolbar')
         self._tb.addAction(self._open_act)
+        self._tb.addAction(self._close_act)
         self._tb.addAction(self._log_info_act)
         self._tb.addAction(self._exit_act)
         self._tb.setAllowedAreas(QtCore.Qt.TopToolBarArea)
@@ -69,8 +83,10 @@ class RTLPWindow(QtGui.QMainWindow):
 
         sb = self.statusBar()
         self._sb_time = QtGui.QLabel()
-        self._sb_time.setObjectName('StatusBarTime')
+        self._sb_time.setObjectName('StatBarTime')
         self._sb_time.setText('No log')
+        self._sb_lst_info = QtGui.QLabel()
+        self._sb_lst_info.setObjectName('StatBarLstInfo')
         sb.addWidget(self._sb_time)
 
     def _make_widgets(self):
@@ -97,36 +113,45 @@ class RTLPWindow(QtGui.QMainWindow):
             QtCore.Qt.Key_Space))
         self._play_btn.setStatusTip(self.tr('Start playback'))
         self._play_btn.clicked.connect(self._playpause)
+        self._play_btn.setEnabled(False)
         self._stop_btn = QtGui.QPushButton(self.style().standardIcon(
             QtGui.QStyle.SP_MediaStop), '')
         self._play_btn.setObjectName('StopBtn')
         self._stop_btn.setStatusTip(self.tr('Stop playback'))
         self._stop_btn.clicked.connect(self._stop)
+        self._stop_btn.setEnabled(False)
         self._skip_back_btn = QtGui.QPushButton(self.style().standardIcon(
             QtGui.QStyle.SP_MediaSeekBackward), '')
         self._play_btn.setObjectName('SkipBackBtn')
         self._skip_back_btn.setStatusTip(self.tr('Skip backwards 60s'))
         self._skip_back_btn.clicked.connect(self._skip_back)
+        self._skip_back_btn.setEnabled(False)
         self._skip_fwd_btn = QtGui.QPushButton(self.style().standardIcon(
             QtGui.QStyle.SP_MediaSeekForward), '')
         self._play_btn.setObjectName('SkipFwdBtn')
         self._skip_fwd_btn.setStatusTip(self.tr('Skip forwards 60s'))
         self._skip_fwd_btn.clicked.connect(self._skip_fwd)
+        self._skip_fwd_btn.setEnabled(False)
         self._rewind_btn = QtGui.QPushButton(self.style().standardIcon(
             QtGui.QStyle.SP_MediaSkipBackward), '')
         self._play_btn.setObjectName('RewindBtn')
         self._rewind_btn.setStatusTip(self.tr('Rewind to the start'))
         self._rewind_btn.clicked.connect(self._rewind)
+        self._rewind_btn.setEnabled(False)
 
-        self._log_targets = log_targets.LogTargets()
         # Target control
         self._chan_lbl = QtGui.QLabel("Channels")
-        self._chan_lst = QtGui.QTreeView()
+        self._chan_lst = QtGui.QListView()
         self._chan_lst.setObjectName('ChanLst')
-        self._chan_lst.setModel(self._log_targets)
+        self._chan_lst.setMouseTracking(True)
+        self._chan_lst.clicked.connect(self._sel_channel)
+
         self._tgt_lbl = QtGui.QLabel("Targets")
         self._tgt_lst = QtGui.QListView()
         self._tgt_lst.setObjectName('TgtLst')
+        self._tgt_lst.setMouseTracking(True)
+        self._tgt_lst.clicked.connect(self._sel_tgt)
+
         self._add_tgt_btn = QtGui.QPushButton('Add')
         self._add_tgt_btn.setObjectName('AddTgtBtn')
         self._add_tgt_btn.setStatusTip(self.tr('Add a target'))
@@ -178,7 +203,19 @@ class RTLPWindow(QtGui.QMainWindow):
         self.setCentralWidget(central)
         self.resize(600, 200)
 
+    def _sel_channel(self, index):
+        self._tgt_lst.setModel(self._log_targets)
+        self._tgt_lst.setRootIndex(index)
+        self._tgt_lst.clearSelection()
+        self._add_tgt_btn.setEnabled(True)
+        self._rem_tgt_btn.setEnabled(False)
+
+    def _sel_tgt(self, index):
+        self._rem_tgt_btn.setEnabled(True)
+
     def _update_timeline(self, start, end):
+        self._start_lbl.setText('{0}'.format(int(math.floor(start))))
+        self._end_lbl.setText('{0}'.format(int(math.ceil(end))))
         self._tl.setMinimum(start)
         self._tl.setMaximum(end)
         self._tl.setTickInterval((end - start) / 15)
@@ -187,7 +224,45 @@ class RTLPWindow(QtGui.QMainWindow):
     # Log file management
     def _open_log(self):
         '''Open a log file.'''
-        print 'Open log'
+        fn = QtGui.QFileDialog.getOpenFileName(parent=self,
+            caption=self.tr('Open log file'),
+            filter=self.tr('OpenRTM log files (*.rtlog)'))
+        if not fn[0]:
+            return
+        self._log = simpkl_log.SimplePickleLog(filename=fn[0], mode='r')
+        self._log_targets = log_targets.LogTargets(self._log, parent=self)
+        self._chan_lst.setModel(self._log_targets)
+        # Controls
+        self._open_act.setEnabled(False)
+        self._close_act.setEnabled(True)
+        self._log_info_act.setEnabled(True)
+        self._play_btn.setEnabled(True)
+        self._stop_btn.setEnabled(True)
+        self._skip_back_btn.setEnabled(True)
+        self._skip_fwd_btn.setEnabled(True)
+        self._rewind_btn.setEnabled(True)
+        # Timeline
+        self._update_timeline(0, self._log.end[1].float - self._log.start[1].float)
+        self._tl.setEnabled(True)
+
+    def _close_log(self):
+        self._add_tgt_btn.setEnabled(False)
+        self._rem_tgt_btn.setEnabled(False)
+        self._chan_lst.setModel(None)
+        self._tgt_lst.setModel(None)
+        del self._log_targets
+        del self._log
+        self._open_act.setEnabled(True)
+        self._close_act.setEnabled(False)
+        self._log_info_act.setEnabled(False)
+        self._play_btn.setEnabled(False)
+        self._stop_btn.setEnabled(False)
+        self._skip_back_btn.setEnabled(False)
+        self._skip_fwd_btn.setEnabled(False)
+        self._rewind_btn.setEnabled(False)
+        # Timeline
+        self._update_timeline(0, 0)
+        self._tl.setEnabled(False)
 
     def _show_log_info(self):
         '''Show the log file's information.'''

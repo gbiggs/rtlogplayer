@@ -21,24 +21,16 @@ Object managing a set of targets for a log's channels.
 from PySide import QtCore
 from PySide import QtGui
 
-
 class LogTargets(QtCore.QAbstractItemModel):
-    def __init__(self, parent=None):
+    def __init__(self, log, parent=None):
         super(LogTargets, self).__init__(parent)
-        self._channels = [Channel('chan1'), Channel('channel 2')]
-        self._channels[0].add_target(['/', 'localhost', 'blag.rtc'], 'in')
-        self._channels[0].add_target(['/', 'otherhost', 'blerg.rtc'], 'out')
-        self._channels[1].add_target(['/', 'localhost', 'blorg.rtc'], 'A_port')
+        self._load_chans(log)
 
-    def clear(self):
-        self.beginRemoveRows()
+    def _load_chans(self, log):
+        start_time, chans = log.metadata
         self._channels = []
-        self.endRemoveRows()
-
-    def load_log(self, fn):
-        self.beginInsertRows()
-        self.endInsertRows()
-        raise NotImplemented
+        for ii, c in enumerate(chans):
+            self._channels.append(Channel(ii, c.name, c.type_name, c.raw))
 
     def columnCount(self, parent):
         return 1
@@ -78,8 +70,6 @@ class LogTargets(QtCore.QAbstractItemModel):
             return self._channels[parent.row()].num_targets
 
     def data(self, index, role):
-        if role == QtCore.Qt.StatusTipRole:
-            print 'data', index,
         if not index.isValid():
             return None
         if role == QtCore.Qt.DisplayRole:
@@ -92,12 +82,24 @@ class LogTargets(QtCore.QAbstractItemModel):
         elif role == QtCore.Qt.StatusTipRole:
             if index.internalPointer().parent:
                 # Target
-                print index.internalPointer().full
+                return 'Target: ' + index.internalPointer().full
+            else:
+                # Channel
+                chan = index.internalPointer()
+                return 'Channel {0}: {1} ({2})'.format(chan.index, chan.name,
+                        chan.data_type)
+        elif role == QtCore.Qt.ToolTipRole:
+            if index.internalPointer().parent:
+                # Target
                 return index.internalPointer().full
             else:
                 # Channel
-                print index.internalPointer().name
-                return index.internalPointer().name
+                chan = index.internalPointer()
+                result = 'Channel {0}: {1} (Data type: {2})\nSources:\n'.format(
+                        chan.index, chan.name, chan.data_type)
+                for s in chan.sources:
+                    result += '  ' + s + '\n'
+                return result[:-1]
         return None
 
     def headerData(self, sec, orientation, role):
@@ -110,8 +112,11 @@ class LogTargets(QtCore.QAbstractItemModel):
 
 
 class Channel:
-    def __init__(self, name):
+    def __init__(self, index, name, data_type, sources):
+        self._index = index
         self._name = name
+        self._data_type = data_type
+        self._srcs = sources
         self._targets = []
 
     def __str__(self):
@@ -122,6 +127,14 @@ class Channel:
 
     def rem_target(self, path, port):
         self._targets.remove(Target(path, port, self))
+
+    @property
+    def data_type(self):
+        return self._data_type
+
+    @property
+    def index(self):
+        return self._index
 
     @property
     def name(self):
@@ -136,6 +149,10 @@ class Channel:
         return None
 
     @property
+    def sources(self):
+        return self._srcs
+
+    @property
     def targets(self):
         return self._targets
 
@@ -146,7 +163,9 @@ class Target:
         self._port = port
         self._parent = parent
         self._short = path[-1] + ':' + port
-        self._full = '/'.join(path) + ':' + port
+        if path[0] == '/':
+            path = path[1:]
+        self._full = '/' + '/'.join(path) + ':' + port
 
     def __str__(self):
         return self.full
