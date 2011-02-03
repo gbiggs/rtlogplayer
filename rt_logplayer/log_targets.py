@@ -25,12 +25,31 @@ from PySide import QtGui
 class LogTargets(QtCore.QAbstractItemModel):
     def __init__(self, parent=None):
         super(LogTargets, self).__init__(parent)
+        self._channels = []
+
+    def clear(self):
+        self.beginRemoveRows()
+        self._channels = []
+        self.endRemoveRows()
 
     def load_log(self, fn):
+        self.beginInsertRows()
+        self.endInsertRows()
         raise NotImplemented
 
+    def columnCount(self, parent):
+        if self._channels[parent.row].num_targets == 0:
+            return 1
+        else:
+            return 2
+
     def rowCount(self, parent):
-        return 2
+        if parent.column == 0:
+            print 'Returning num channels for rows'
+            return len(self._channels)
+        else:
+            print 'Returning num_targets for rows'
+            return self._channels[row].num_targets
 
     def data(self, index, role):
         if role == QtCore.Qt.DisplayRole:
@@ -46,6 +65,31 @@ class LogTargets(QtCore.QAbstractItemModel):
             if sec = 1:
                 return 'Targets'
         return None
+
+
+class Channel:
+    def __init__(self, name):
+        self._name = name
+        self._targets = []
+
+    def add_target(self, target):
+        self._targets.append(target)
+
+    def rem_target(self, target):
+        self._targets.remove(target)
+
+    @property
+    def num_targets(self):
+        return len(self._targets)
+
+
+def Target:
+    def __init__(self, path, port, parent):
+        self._path = path
+        self._port = port
+        self.parent = parent
+        self.short = path[-1] + ':' + port
+        self.full = '/'.join(path) + ':' + port
 
 
 # vim: tw=79
