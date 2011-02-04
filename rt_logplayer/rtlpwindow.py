@@ -30,8 +30,14 @@ import simpkl_log
 
 
 class RTLPWindow(QtGui.QMainWindow):
+    NO_FILE = 1
+    STOPPED = 2
+    PLAYING = 3
+
     def __init__(self, parent=None):
         super(RTLPWindow, self).__init__(parent)
+        self._log = None
+        self._log_targets = None
         self.setWindowTitle('RTLogPlayer')
         self.setObjectName('RTLogPlayer')
         self._make_actions()
@@ -100,7 +106,7 @@ class RTLPWindow(QtGui.QMainWindow):
         self._tl.setTickPosition(QtGui.QSlider.TicksBelow)
         self._tl.setSingleStep(1)
         self._tl.setPageStep(60)
-        self._update_timeline(0, 0)
+        self._update_timeline()
         self._tl.setEnabled(False)
         self._tl.sliderMoved.connect(self._scan)
         self._tl.sliderReleased.connect(self._skip_to)
@@ -115,7 +121,7 @@ class RTLPWindow(QtGui.QMainWindow):
         self._play_btn.clicked.connect(self._playpause)
         self._play_btn.setEnabled(False)
         self._stop_btn = QtGui.QPushButton(self.style().standardIcon(
-            QtGui.QStyle.SP_MediaStop), '')
+            QtGui.QStyle.SP_MediaPause), '')
         self._play_btn.setObjectName('StopBtn')
         self._stop_btn.setStatusTip(self.tr('Stop playback'))
         self._stop_btn.clicked.connect(self._stop)
@@ -203,6 +209,40 @@ class RTLPWindow(QtGui.QMainWindow):
         self.setCentralWidget(central)
         self.resize(600, 200)
 
+    def _enable_ui(self, mode):
+        if mode == self.NO_FILE:
+            self._open_act.setEnabled(True)
+            self._close_act.setEnabled(False)
+            self._log_info_act.setEnabled(False)
+            self._add_tgt_btn.setEnabled(False)
+            self._rem_tgt_btn.setEnabled(False)
+            self._play_btn.setEnabled(False)
+            self._stop_btn.setEnabled(False)
+            self._skip_back_btn.setEnabled(False)
+            self._skip_fwd_btn.setEnabled(False)
+            self._rewind_btn.setEnabled(False)
+            self._tl.setEnabled(False)
+        elif mode == self.STOPPED:
+            self._open_act.setEnabled(False)
+            self._close_act.setEnabled(True)
+            self._log_info_act.setEnabled(True)
+            self._play_btn.setEnabled(True)
+            self._stop_btn.setEnabled(False)
+            self._skip_back_btn.setEnabled(True)
+            self._skip_fwd_btn.setEnabled(True)
+            self._rewind_btn.setEnabled(True)
+            self._tl.setEnabled(True)
+        elif mode == self.PLAYING:
+            self._open_act.setEnabled(False)
+            self._close_act.setEnabled(True)
+            self._log_info_act.setEnabled(True)
+            self._play_btn.setEnabled(False)
+            self._stop_btn.setEnabled(True)
+            self._skip_back_btn.setEnabled(True)
+            self._skip_fwd_btn.setEnabled(True)
+            self._rewind_btn.setEnabled(True)
+            self._tl.setEnabled(True)
+
     def _sel_channel(self, index):
         self._tgt_lst.setModel(self._log_targets)
         self._tgt_lst.setRootIndex(index)
@@ -213,9 +253,16 @@ class RTLPWindow(QtGui.QMainWindow):
     def _sel_tgt(self, index):
         self._rem_tgt_btn.setEnabled(True)
 
-    def _update_timeline(self, start, end):
-        self._start_lbl.setText('{0}'.format(int(math.floor(start))))
-        self._end_lbl.setText('{0}'.format(int(math.ceil(end))))
+    def _update_timeline(self):
+        if self._log:
+            start = int(math.floor(0))
+            end = int(math.ceil(self._log.end[1].float -
+                self._log.start[1].float))
+        else:
+            start = 0
+            end = 0
+        self._start_lbl.setText('{0}'.format(start))
+        self._end_lbl.setText('{0}'.format(end))
         self._tl.setMinimum(start)
         self._tl.setMaximum(end)
         self._tl.setTickInterval((end - start) / 15)
@@ -232,37 +279,16 @@ class RTLPWindow(QtGui.QMainWindow):
         self._log = simpkl_log.SimplePickleLog(filename=fn[0], mode='r')
         self._log_targets = log_targets.LogTargets(self._log, parent=self)
         self._chan_lst.setModel(self._log_targets)
-        # Controls
-        self._open_act.setEnabled(False)
-        self._close_act.setEnabled(True)
-        self._log_info_act.setEnabled(True)
-        self._play_btn.setEnabled(True)
-        self._stop_btn.setEnabled(True)
-        self._skip_back_btn.setEnabled(True)
-        self._skip_fwd_btn.setEnabled(True)
-        self._rewind_btn.setEnabled(True)
-        # Timeline
-        self._update_timeline(0, self._log.end[1].float - self._log.start[1].float)
-        self._tl.setEnabled(True)
+        self._update_timeline()
+        self._enable_ui(self.STOPPED)
 
     def _close_log(self):
-        self._add_tgt_btn.setEnabled(False)
-        self._rem_tgt_btn.setEnabled(False)
         self._chan_lst.setModel(None)
         self._tgt_lst.setModel(None)
-        del self._log_targets
-        del self._log
-        self._open_act.setEnabled(True)
-        self._close_act.setEnabled(False)
-        self._log_info_act.setEnabled(False)
-        self._play_btn.setEnabled(False)
-        self._stop_btn.setEnabled(False)
-        self._skip_back_btn.setEnabled(False)
-        self._skip_fwd_btn.setEnabled(False)
-        self._rewind_btn.setEnabled(False)
-        # Timeline
-        self._update_timeline(0, 0)
-        self._tl.setEnabled(False)
+        self._log_targets = None
+        self._log = None
+        self._update_timeline()
+        self._enable_ui(self.NO_FILE)
 
     def _show_log_info(self):
         '''Show the log file's information.'''
@@ -272,6 +298,7 @@ class RTLPWindow(QtGui.QMainWindow):
     def _playpause(self):
         '''Plays or pauses playback.'''
         print 'Play/pause'
+        self._enable_ui(self.PLAYING)
 
     def _rewind(self):
         '''Rewind the log file.'''
@@ -296,6 +323,7 @@ class RTLPWindow(QtGui.QMainWindow):
     def _stop(self):
         '''Stop playback.'''
         print 'Stop'
+        self._enable_ui(self.STOPPED)
 
     # Target management
     def _add_target(self):
