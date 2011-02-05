@@ -102,14 +102,6 @@ class LogTargets(QtCore.QAbstractItemModel):
                 return result[:-1]
         return None
 
-    def headerData(self, sec, orientation, role):
-        if role == QtCore.Qt.DisplayRole and orientation == QtCore.Qt.Horizontal:
-            if sec == 0:
-                return 'Channels'
-            if sec == 1:
-                return 'Targets'
-        return None
-
 
 class Channel:
     def __init__(self, index, name, data_type, sources):

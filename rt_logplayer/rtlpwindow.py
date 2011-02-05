@@ -22,11 +22,12 @@ Main window implementation.
 import math
 from PySide import QtCore
 from PySide import QtGui
+import rtctree
 
 import ilog
 import log_targets
 import simpkl_log
-
+import rtctree_mdl
 
 
 class RTLPWindow(QtGui.QMainWindow):
@@ -38,22 +39,24 @@ class RTLPWindow(QtGui.QMainWindow):
         super(RTLPWindow, self).__init__(parent)
         self._log = None
         self._log_targets = None
+        self._tree = None
         self.setWindowTitle('RTLogPlayer')
         self.setObjectName('RTLogPlayer')
         self._make_actions()
-        self._make_bars()
+        self._make_status_bar()
         self._make_widgets()
-        self._make_layout()
+        self.resize(600, 300)
+        self._update_timeline()
 
     def _make_actions(self):
-        self._open_act = QtGui.QAction(self.tr('&Open'), self)
+        self._open_act = QtGui.QAction(self.tr('&Open log'), self)
         self._open_act.setShortcuts(QtGui.QKeySequence.Open)
         self._open_act.setStatusTip(self.tr('Open a log file'))
         self._open_act.setIcon(self.style().standardIcon(
             QtGui.QStyle.SP_DialogOpenButton))
         self._open_act.triggered.connect(self._open_log)
 
-        self._close_act = QtGui.QAction(self.tr('&Close'), self)
+        self._close_act = QtGui.QAction(self.tr('&Close log'), self)
         self._close_act.setShortcuts(QtGui.QKeySequence.Close)
         self._close_act.setStatusTip(self.tr('Close the log file'))
         self._close_act.setIcon(self.style().standardIcon(
@@ -68,7 +71,7 @@ class RTLPWindow(QtGui.QMainWindow):
             QtGui.QStyle.SP_MessageBoxCritical))
         self._exit_act.triggered.connect(self.close)
 
-        self._log_info_act = QtGui.QAction(self.tr('&Information'), self)
+        self._log_info_act = QtGui.QAction(self.tr('Log &Information'), self)
         self._log_info_act.setShortcuts([QtGui.QKeySequence(
             QtCore.Qt.CTRL + QtCore.Qt.Key_I)])
         self._log_info_act.setStatusTip(self.tr('View log information'))
@@ -77,16 +80,39 @@ class RTLPWindow(QtGui.QMainWindow):
         self._log_info_act.triggered.connect(self._show_log_info)
         self._log_info_act.setEnabled(False)
 
-    def _make_bars(self):
+        self._add_ns_act = QtGui.QAction(self.tr('&Add name server'), self)
+        self._add_ns_act.setShortcuts([QtGui.QKeySequence(
+            QtCore.Qt.CTRL + QtCore.Qt.Key_A)])
+        self._add_ns_act.setStatusTip(self.tr('Add a name server to the RTC '
+            'Tree'))
+        self._add_ns_act.setIcon(self.style().standardIcon(
+            QtGui.QStyle.SP_FileDialogNewFolder))
+        self._add_ns_act.triggered.connect(self._add_ns)
+
+        self._rem_ns_act = QtGui.QAction(self.tr('&Remove name server'), self)
+        self._rem_ns_act.setShortcuts([QtGui.QKeySequence(
+            QtCore.Qt.CTRL + QtCore.Qt.Key_R)])
+        self._rem_ns_act.setStatusTip(self.tr('Remove a name server from the '
+            'RTC Tree'))
+        self._rem_ns_act.setIcon(self.style().standardIcon(
+            QtGui.QStyle.SP_DialogCloseButton))
+        self._rem_ns_act.triggered.connect(self._rem_ns)
+        self._rem_ns_act.setEnabled(False)
+
         self._tb = self.addToolBar(self.tr('Log'))
         self._tb.setObjectName('Toolbar')
         self._tb.addAction(self._open_act)
         self._tb.addAction(self._close_act)
         self._tb.addAction(self._log_info_act)
+        self._tb.addSeparator()
+        self._tb.addAction(self._add_ns_act)
+        self._tb.addAction(self._rem_ns_act)
+        self._tb.addSeparator()
         self._tb.addAction(self._exit_act)
         self._tb.setAllowedAreas(QtCore.Qt.TopToolBarArea)
         self.addToolBar(QtCore.Qt.TopToolBarArea, self._tb)
 
+    def _make_status_bar(self):
         sb = self.statusBar()
         self._sb_time = QtGui.QLabel()
         self._sb_time.setObjectName('StatBarTime')
@@ -96,22 +122,45 @@ class RTLPWindow(QtGui.QMainWindow):
         sb.addWidget(self._sb_time)
 
     def _make_widgets(self):
+        central = QtGui.QWidget(self)
+        vbox = QtGui.QVBoxLayout(central)
+
         # Timeline
+        row = QtGui.QHBoxLayout()
         self._start_lbl = QtGui.QLabel('0')
         self._start_lbl.setAlignment(QtCore.Qt.AlignRight |
                 QtCore.Qt.AlignVCenter)
-        self._end_lbl = QtGui.QLabel('0')
+        row.addWidget(self._start_lbl)
         self._tl = QtGui.QSlider(QtCore.Qt.Horizontal)
         self._tl.setObjectName('Timeline')
         self._tl.setTickPosition(QtGui.QSlider.TicksBelow)
         self._tl.setSingleStep(1)
         self._tl.setPageStep(60)
-        self._update_timeline()
         self._tl.setEnabled(False)
         self._tl.sliderMoved.connect(self._scan)
         self._tl.sliderReleased.connect(self._skip_to)
+        row.addWidget(self._tl)
+        self._end_lbl = QtGui.QLabel('0')
+        row.addWidget(self._end_lbl)
+        vbox.addLayout(row)
 
         # Playback control
+        row = QtGui.QHBoxLayout()
+        row.addStretch()
+        self._rewind_btn = QtGui.QPushButton(self.style().standardIcon(
+            QtGui.QStyle.SP_MediaSkipBackward), '')
+        self._rewind_btn.setObjectName('RewindBtn')
+        self._rewind_btn.setStatusTip(self.tr('Rewind to the start'))
+        self._rewind_btn.clicked.connect(self._rewind)
+        self._rewind_btn.setEnabled(False)
+        row.addWidget(self._rewind_btn)
+        self._skip_back_btn = QtGui.QPushButton(self.style().standardIcon(
+            QtGui.QStyle.SP_MediaSeekBackward), '')
+        self._skip_back_btn.setObjectName('SkipBackBtn')
+        self._skip_back_btn.setStatusTip(self.tr('Skip backwards 60s'))
+        self._skip_back_btn.clicked.connect(self._skip_back)
+        self._skip_back_btn.setEnabled(False)
+        row.addWidget(self._skip_back_btn)
         self._play_btn = QtGui.QPushButton(self.style().standardIcon(
             QtGui.QStyle.SP_MediaPlay), '')
         self._play_btn.setObjectName('PlayBtn')
@@ -120,100 +169,73 @@ class RTLPWindow(QtGui.QMainWindow):
         self._play_btn.setStatusTip(self.tr('Start playback'))
         self._play_btn.clicked.connect(self._playpause)
         self._play_btn.setEnabled(False)
+        row.addWidget(self._play_btn)
+        self._skip_fwd_btn = QtGui.QPushButton(self.style().standardIcon(
+            QtGui.QStyle.SP_MediaSeekForward), '')
+        self._skip_fwd_btn.setObjectName('SkipFwdBtn')
+        self._skip_fwd_btn.setStatusTip(self.tr('Skip forwards 60s'))
+        self._skip_fwd_btn.clicked.connect(self._skip_fwd)
+        self._skip_fwd_btn.setEnabled(False)
+        row.addWidget(self._skip_fwd_btn)
         self._stop_btn = QtGui.QPushButton(self.style().standardIcon(
             QtGui.QStyle.SP_MediaPause), '')
         self._play_btn.setObjectName('StopBtn')
         self._stop_btn.setStatusTip(self.tr('Stop playback'))
         self._stop_btn.clicked.connect(self._stop)
         self._stop_btn.setEnabled(False)
-        self._skip_back_btn = QtGui.QPushButton(self.style().standardIcon(
-            QtGui.QStyle.SP_MediaSeekBackward), '')
-        self._play_btn.setObjectName('SkipBackBtn')
-        self._skip_back_btn.setStatusTip(self.tr('Skip backwards 60s'))
-        self._skip_back_btn.clicked.connect(self._skip_back)
-        self._skip_back_btn.setEnabled(False)
-        self._skip_fwd_btn = QtGui.QPushButton(self.style().standardIcon(
-            QtGui.QStyle.SP_MediaSeekForward), '')
-        self._play_btn.setObjectName('SkipFwdBtn')
-        self._skip_fwd_btn.setStatusTip(self.tr('Skip forwards 60s'))
-        self._skip_fwd_btn.clicked.connect(self._skip_fwd)
-        self._skip_fwd_btn.setEnabled(False)
-        self._rewind_btn = QtGui.QPushButton(self.style().standardIcon(
-            QtGui.QStyle.SP_MediaSkipBackward), '')
-        self._play_btn.setObjectName('RewindBtn')
-        self._rewind_btn.setStatusTip(self.tr('Rewind to the start'))
-        self._rewind_btn.clicked.connect(self._rewind)
-        self._rewind_btn.setEnabled(False)
+        row.addWidget(self._stop_btn)
+        row.addStretch()
+        vbox.addLayout(row)
 
-        # Target control
-        self._chan_lbl = QtGui.QLabel("Channels")
-        self._chan_lst = QtGui.QListView()
-        self._chan_lst.setObjectName('ChanLst')
-        self._chan_lst.setMouseTracking(True)
-        self._chan_lst.clicked.connect(self._sel_channel)
-
-        self._tgt_lbl = QtGui.QLabel("Targets")
-        self._tgt_lst = QtGui.QListView()
-        self._tgt_lst.setObjectName('TgtLst')
-        self._tgt_lst.setMouseTracking(True)
-        self._tgt_lst.clicked.connect(self._sel_tgt)
-
-        self._add_tgt_btn = QtGui.QPushButton('Add')
+        # Target display
+        row = QtGui.QHBoxLayout()
+        col = QtGui.QVBoxLayout()
+        tree_lbl = QtGui.QLabel(self.tr('RTC Tree'))
+        col.addWidget(tree_lbl)
+        self._tree_view = QtGui.QTreeView()
+        self._tree_view.setObjectName('RTCTreeView')
+        self._tree_view.setMouseTracking(True)
+        col.addWidget(self._tree_view)
+        row.addLayout(col)
+        col = QtGui.QVBoxLayout()
+        col.addStretch()
+        self._add_tgt_btn = QtGui.QPushButton(self.style().standardIcon(
+            QtGui.QStyle.SP_ArrowRight), '')
         self._add_tgt_btn.setObjectName('AddTgtBtn')
-        self._add_tgt_btn.setStatusTip(self.tr('Add a target'))
+        self._add_tgt_btn.setStatusTip(self.tr(
+            'Add the selected port as a channel target'))
         self._add_tgt_btn.clicked.connect(self._add_target)
         self._add_tgt_btn.setEnabled(False)
-        self._rem_tgt_btn = QtGui.QPushButton('Remove')
+        col.addWidget(self._add_tgt_btn)
+        self._rem_tgt_btn = QtGui.QPushButton(self.style().standardIcon(
+            QtGui.QStyle.SP_ArrowLeft), '')
         self._rem_tgt_btn.setObjectName('RemTgtBtn')
-        self._rem_tgt_btn.setStatusTip(self.tr('Remove a target'))
+        self._rem_tgt_btn.setStatusTip(self.tr(
+            'Remove the selected channel target'))
         self._rem_tgt_btn.clicked.connect(self._rem_target)
         self._rem_tgt_btn.setEnabled(False)
-
-    def _make_layout(self):
-        central = QtGui.QWidget(self)
-        vbox = QtGui.QVBoxLayout(central)
-
-        row1 = QtGui.QHBoxLayout()
-        row1.setObjectName('Row1')
-        row1.addWidget(self._start_lbl)
-        row1.addWidget(self._tl)
-        row1.addWidget(self._end_lbl)
-        vbox.addLayout(row1)
-
-        row2 = QtGui.QHBoxLayout()
-        row2.setObjectName('Row2')
-        row2.addStretch()
-        row2.addWidget(self._rewind_btn)
-        row2.addWidget(self._skip_back_btn)
-        row2.addWidget(self._play_btn)
-        row2.addWidget(self._stop_btn)
-        row2.addWidget(self._skip_fwd_btn)
-        row2.addStretch()
-        vbox.addLayout(row2)
-
-        row3 = QtGui.QHBoxLayout()
-        row3_c1 = QtGui.QVBoxLayout()
-        row3_c1.addWidget(self._chan_lbl)
-        row3_c1.addWidget(self._chan_lst)
-        row3.addLayout(row3_c1)
-        row3_c2 = QtGui.QVBoxLayout()
-        row3_c2.addWidget(self._tgt_lbl)
-        row3_c2.addWidget(self._tgt_lst)
-        btnsbox = QtGui.QHBoxLayout()
-        btnsbox.addWidget(self._add_tgt_btn)
-        btnsbox.addWidget(self._rem_tgt_btn)
-        row3_c2.addLayout(btnsbox)
-        row3.addLayout(row3_c2)
-        vbox.addLayout(row3)
+        col.addWidget(self._rem_tgt_btn)
+        col.addStretch()
+        row.addLayout(col)
+        # Channel display
+        col = QtGui.QVBoxLayout()
+        chan_lbl = QtGui.QLabel(self.tr('Channels'))
+        col.addWidget(chan_lbl)
+        self._chan_view = QtGui.QTreeView()
+        self._chan_view.setObjectName('ChanView')
+        self._chan_view.setMouseTracking(True)
+        col.addWidget(self._chan_view)
+        row.addLayout(col)
+        vbox.addLayout(row)
 
         self.setCentralWidget(central)
-        self.resize(600, 200)
 
     def _enable_ui(self, mode):
         if mode == self.NO_FILE:
             self._open_act.setEnabled(True)
             self._close_act.setEnabled(False)
             self._log_info_act.setEnabled(False)
+            self._mng_tgts_act.setEnabled(False)
             self._add_tgt_btn.setEnabled(False)
             self._rem_tgt_btn.setEnabled(False)
             self._play_btn.setEnabled(False)
@@ -226,6 +248,7 @@ class RTLPWindow(QtGui.QMainWindow):
             self._open_act.setEnabled(False)
             self._close_act.setEnabled(True)
             self._log_info_act.setEnabled(True)
+            self._mng_tgts_act.setEnabled(True)
             self._play_btn.setEnabled(True)
             self._stop_btn.setEnabled(False)
             self._skip_back_btn.setEnabled(True)
@@ -236,12 +259,19 @@ class RTLPWindow(QtGui.QMainWindow):
             self._open_act.setEnabled(False)
             self._close_act.setEnabled(True)
             self._log_info_act.setEnabled(True)
+            self._mng_tgts_act.setEnabled(True)
             self._play_btn.setEnabled(False)
             self._stop_btn.setEnabled(True)
             self._skip_back_btn.setEnabled(True)
             self._skip_fwd_btn.setEnabled(True)
             self._rewind_btn.setEnabled(True)
             self._tl.setEnabled(True)
+
+    def _add_ns(self):
+        print 'Add name server'
+
+    def _rem_ns(self):
+        print 'Remove name server'
 
     def _sel_channel(self, index):
         self._tgt_lst.setModel(self._log_targets)
@@ -271,22 +301,27 @@ class RTLPWindow(QtGui.QMainWindow):
     # Log file management
     def _open_log(self):
         '''Open a log file.'''
-        fn = QtGui.QFileDialog.getOpenFileName(parent=self,
-            caption=self.tr('Open log file'),
-            filter=self.tr('OpenRTM log files (*.rtlog)'))
+        #fn = QtGui.QFileDialog.getOpenFileName(parent=self,
+            #caption=self.tr('Open log file'),
+            #filter=self.tr('OpenRTM log files (*.rtlog)'))
+        fn = ['/home/geoff/research/src/rtlogplayer/test.rtlog']
         if not fn[0]:
             return
         self._log = simpkl_log.SimplePickleLog(filename=fn[0], mode='r')
         self._log_targets = log_targets.LogTargets(self._log, parent=self)
+        self._tree = rtctree_mdl.RTCTree()
         self._chan_lst.setModel(self._log_targets)
+        self._comp_lst.setModel(self._tree)
         self._update_timeline()
         self._enable_ui(self.STOPPED)
 
     def _close_log(self):
         self._chan_lst.setModel(None)
         self._tgt_lst.setModel(None)
+        self._comp_lst.setModel(None)
         self._log_targets = None
         self._log = None
+        self._tree = None
         self._update_timeline()
         self._enable_ui(self.NO_FILE)
 
