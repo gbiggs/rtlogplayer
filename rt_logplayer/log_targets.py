@@ -32,6 +32,18 @@ class LogTargets(QtCore.QAbstractItemModel):
         for ii, c in enumerate(chans):
             self._channels.append(Channel(ii, c.name, c.type_name, c.raw))
 
+    def add_target(self, chan, target):
+        port = target.internalPointer()
+        tgt_row = chan.internalPointer().num_targets
+        self.beginInsertRows(chan, tgt_row, tgt_row)
+        chan.internalPointer().add_target(port.owner.full_path, port.name)
+        self.endInsertRows()
+
+    def rem_target(self, chan, target):
+        self.beginRemoveRows(chan, target.row(), target.row())
+        chan.internalPointer().rem_target(target.internalPointer())
+        self.endRemoveRows()
+
     def columnCount(self, parent):
         return 1
 
@@ -41,6 +53,8 @@ class LogTargets(QtCore.QAbstractItemModel):
             return self.createIndex(row, col, self._channels[row])
         elif parent.internalPointer().parent == None:
             # Channel
+            if row >= self._channels[parent.row()].num_targets:
+                return QtCore.QModelIndex()
             return self.createIndex(row, col, self._channels[parent.row()].targets[row])
         else:
             # Target (no children)
@@ -103,7 +117,7 @@ class LogTargets(QtCore.QAbstractItemModel):
         return None
 
 
-class Channel:
+class Channel(object):
     def __init__(self, index, name, data_type, sources):
         self._index = index
         self._name = name
@@ -117,8 +131,8 @@ class Channel:
     def add_target(self, path, port):
         self._targets.append(Target(path, port, self))
 
-    def rem_target(self, path, port):
-        self._targets.remove(Target(path, port, self))
+    def rem_target(self, target):
+        self._targets.remove(target)
 
     @property
     def data_type(self):
@@ -149,7 +163,7 @@ class Channel:
         return self._targets
 
 
-class Target:
+class Target(object):
     def __init__(self, path, port, parent):
         self._path = path
         self._port = port

@@ -20,9 +20,10 @@ Main window implementation.
 
 
 import math
+import os
 from PySide import QtCore
 from PySide import QtGui
-import rtctree
+import time
 
 import ilog
 import log_targets
@@ -37,9 +38,15 @@ class RTLPWindow(QtGui.QMainWindow):
 
     def __init__(self, parent=None):
         super(RTLPWindow, self).__init__(parent)
+        # Stores the loaded log file
         self._log = None
+        self._log_fn = None
+        # The model representing channels and targets in the log
         self._log_targets = None
+        # The model wrapper for the RTC Tree
         self._tree = None
+        # Stores the index of the currently-selected channel
+        self._cur_chan = None
         self.setWindowTitle('RTLogPlayer')
         self.setObjectName('RTLogPlayer')
         self._make_actions()
@@ -88,6 +95,7 @@ class RTLPWindow(QtGui.QMainWindow):
         self._add_ns_act.setIcon(self.style().standardIcon(
             QtGui.QStyle.SP_FileDialogNewFolder))
         self._add_ns_act.triggered.connect(self._add_ns)
+        self._add_ns_act.setEnabled(False)
 
         self._rem_ns_act = QtGui.QAction(self.tr('&Remove name server'), self)
         self._rem_ns_act.setShortcuts([QtGui.QKeySequence(
@@ -170,13 +178,6 @@ class RTLPWindow(QtGui.QMainWindow):
         self._play_btn.clicked.connect(self._playpause)
         self._play_btn.setEnabled(False)
         row.addWidget(self._play_btn)
-        self._skip_fwd_btn = QtGui.QPushButton(self.style().standardIcon(
-            QtGui.QStyle.SP_MediaSeekForward), '')
-        self._skip_fwd_btn.setObjectName('SkipFwdBtn')
-        self._skip_fwd_btn.setStatusTip(self.tr('Skip forwards 60s'))
-        self._skip_fwd_btn.clicked.connect(self._skip_fwd)
-        self._skip_fwd_btn.setEnabled(False)
-        row.addWidget(self._skip_fwd_btn)
         self._stop_btn = QtGui.QPushButton(self.style().standardIcon(
             QtGui.QStyle.SP_MediaPause), '')
         self._play_btn.setObjectName('StopBtn')
@@ -184,6 +185,13 @@ class RTLPWindow(QtGui.QMainWindow):
         self._stop_btn.clicked.connect(self._stop)
         self._stop_btn.setEnabled(False)
         row.addWidget(self._stop_btn)
+        self._skip_fwd_btn = QtGui.QPushButton(self.style().standardIcon(
+            QtGui.QStyle.SP_MediaSeekForward), '')
+        self._skip_fwd_btn.setObjectName('SkipFwdBtn')
+        self._skip_fwd_btn.setStatusTip(self.tr('Skip forwards 60s'))
+        self._skip_fwd_btn.clicked.connect(self._skip_fwd)
+        self._skip_fwd_btn.setEnabled(False)
+        row.addWidget(self._skip_fwd_btn)
         row.addStretch()
         vbox.addLayout(row)
 
@@ -195,6 +203,9 @@ class RTLPWindow(QtGui.QMainWindow):
         self._tree_view = QtGui.QTreeView()
         self._tree_view.setObjectName('RTCTreeView')
         self._tree_view.setMouseTracking(True)
+        self._tree_view.setHeaderHidden(True)
+        self._tree_view.setSelectionMode(QtGui.QAbstractItemView.SingleSelection)
+        self._tree_view.clicked.connect(self._sel_rtctree)
         col.addWidget(self._tree_view)
         row.addLayout(col)
         col = QtGui.QVBoxLayout()
@@ -224,6 +235,9 @@ class RTLPWindow(QtGui.QMainWindow):
         self._chan_view = QtGui.QTreeView()
         self._chan_view.setObjectName('ChanView')
         self._chan_view.setMouseTracking(True)
+        self._chan_view.setHeaderHidden(True)
+        self._chan_view.setSelectionMode(QtGui.QAbstractItemView.SingleSelection)
+        self._chan_view.clicked.connect(self._sel_channel)
         col.addWidget(self._chan_view)
         row.addLayout(col)
         vbox.addLayout(row)
@@ -235,7 +249,7 @@ class RTLPWindow(QtGui.QMainWindow):
             self._open_act.setEnabled(True)
             self._close_act.setEnabled(False)
             self._log_info_act.setEnabled(False)
-            self._mng_tgts_act.setEnabled(False)
+            self._add_ns_act.setEnabled(False)
             self._add_tgt_btn.setEnabled(False)
             self._rem_tgt_btn.setEnabled(False)
             self._play_btn.setEnabled(False)
@@ -248,7 +262,7 @@ class RTLPWindow(QtGui.QMainWindow):
             self._open_act.setEnabled(False)
             self._close_act.setEnabled(True)
             self._log_info_act.setEnabled(True)
-            self._mng_tgts_act.setEnabled(True)
+            self._add_ns_act.setEnabled(True)
             self._play_btn.setEnabled(True)
             self._stop_btn.setEnabled(False)
             self._skip_back_btn.setEnabled(True)
@@ -259,7 +273,7 @@ class RTLPWindow(QtGui.QMainWindow):
             self._open_act.setEnabled(False)
             self._close_act.setEnabled(True)
             self._log_info_act.setEnabled(True)
-            self._mng_tgts_act.setEnabled(True)
+            self._add_ns_act.setEnabled(True)
             self._play_btn.setEnabled(False)
             self._stop_btn.setEnabled(True)
             self._skip_back_btn.setEnabled(True)
@@ -268,20 +282,53 @@ class RTLPWindow(QtGui.QMainWindow):
             self._tl.setEnabled(True)
 
     def _add_ns(self):
-        print 'Add name server'
+        ns, ok = QtGui.QInputDialog.getText(self, self.tr('Add name server'),
+                self.tr('Address:'), text='localhost')
+        if ok:
+            res = self._tree.add_server(ns)
+            if res:
+                QtGui.QMessageBox.warning(self, self.tr('Add name server'),
+                    self.tr('Invalid CORBA naming service: '
+                        '{0}').format(res))
 
     def _rem_ns(self):
-        print 'Remove name server'
+        ns = self._tree_view.selectedIndexes()[0]
+        self._tree.rem_server(ns)
 
     def _sel_channel(self, index):
-        self._tgt_lst.setModel(self._log_targets)
-        self._tgt_lst.setRootIndex(index)
-        self._tgt_lst.clearSelection()
-        self._add_tgt_btn.setEnabled(True)
-        self._rem_tgt_btn.setEnabled(False)
+        if type(index.internalPointer()) == log_targets.Channel:
+            self._cur_chan = index
+            self._rem_tgt_btn.setEnabled(False)
+            if self._port_selected():
+                self._add_tgt_btn.setEnabled(True)
+        elif type(index.internalPointer()) == log_targets.Target:
+            self._cur_chan = self._log_targets.parent(index)
+            self._rem_tgt_btn.setEnabled(True)
+            if self._port_selected():
+                self._add_tgt_btn.setEnabled(True)
+        else:
+            self._cur_chan = None
+            self._rem_tgt_btn.setEnabled(False)
+            self._add_tgt_btn.setEnabled(False)
 
-    def _sel_tgt(self, index):
-        self._rem_tgt_btn.setEnabled(True)
+    def _sel_rtctree(self, index):
+        if self._tree.is_port(index) and self._cur_chan:
+            self._add_tgt_btn.setEnabled(True)
+            self._rem_ns_act.setEnabled(False)
+        elif self._tree.is_nameserver(index):
+            self._add_tgt_btn.setEnabled(False)
+            self._rem_ns_act.setEnabled(True)
+        else:
+            self._add_tgt_btn.setEnabled(False)
+            self._rem_ns_act.setEnabled(False)
+
+    def _port_selected(self):
+        sel = self._tree_view.selectedIndexes()
+        if not sel:
+            return False
+        if self._tree.is_port(sel[0]):
+            return True
+        return False
 
     def _update_timeline(self):
         if self._log:
@@ -307,18 +354,18 @@ class RTLPWindow(QtGui.QMainWindow):
         fn = ['/home/geoff/research/src/rtlogplayer/test.rtlog']
         if not fn[0]:
             return
+        self._log_fn = fn[0]
         self._log = simpkl_log.SimplePickleLog(filename=fn[0], mode='r')
         self._log_targets = log_targets.LogTargets(self._log, parent=self)
+        self._chan_view.setModel(self._log_targets)
         self._tree = rtctree_mdl.RTCTree()
-        self._chan_lst.setModel(self._log_targets)
-        self._comp_lst.setModel(self._tree)
+        self._tree_view.setModel(self._tree)
         self._update_timeline()
         self._enable_ui(self.STOPPED)
 
     def _close_log(self):
-        self._chan_lst.setModel(None)
-        self._tgt_lst.setModel(None)
-        self._comp_lst.setModel(None)
+        self._chan_view.setModel(None)
+        self._tree_view.setModel(None)
         self._log_targets = None
         self._log = None
         self._tree = None
@@ -327,7 +374,56 @@ class RTLPWindow(QtGui.QMainWindow):
 
     def _show_log_info(self):
         '''Show the log file's information.'''
-        print 'Show log info'
+        statinfo = os.stat(self._log_fn)
+        size = statinfo.st_size
+        if size > 1024 * 1024 * 1024: # GiB
+            size_str = '{0:.2f}GiB ({1}B)'.format(size / (1024.0 * 1024 * 1024), size)
+        elif size > 1024 * 1024: # MiB
+            size_str = '{0:.2f}MiB ({1}B)'.format(size / (1024.0 * 1024), size)
+        elif size > 1024: # KiB
+            size_str = '{0:.2f}KiB ({1}B)'.format(size / 1024.0, size)
+        else:
+            size_str = '{0}B'.format(size)
+
+        start_time, port_specs = self._log.metadata
+        start_time_str = time.strftime('%Y-%m-%d %H:%M:%S',
+                time.localtime(start_time))
+        first_ind, first_time = self._log.start
+        first_time_str = time.strftime('%Y-%m-%d %H:%M:%S',
+                time.localtime(first_time.float))
+        end_ind, end_time = self._log.end
+        end_time_str = time.strftime('%Y-%m-%d %H:%M:%S',
+                time.localtime(end_time.float))
+
+        log_info = '<html><b>' + self._log_fn + '</b><br/>'
+        log_info += '<table>'
+        log_info += '<tr><td>Size</td><td>' + size_str + '</td></tr>'
+        log_info += '<tr><td>Start time</td><td>{0} ({1})'.format(
+            start_time_str, start_time) + '</td></tr>'
+        log_info += '<tr><td>First entry time</td><td>{0} ({1})'.format(
+            first_time_str, first_time) + '</td></tr>'
+        log_info += '<tr><td>End time</td><td>{0} ({1})'.format(
+            end_time_str, end_time) + '</td></tr>'
+        log_info += '<tr><td>Number of entries</td><td>{0}'.format(
+                end_ind + 1) + '</td></tr>'
+        log_info += '</table><br/><b>Channels</b></html>'
+
+        #print 'Name: {0}'.format(self._log_fn)
+        #print 'Size: ' + size_str
+        #print 'Start time: {0} ({1})'.format(start_time_str, start_time)
+        #print 'First entry time: {0} ({1})'.format(first_time_str, first_time)
+        #print 'End time: {0} ({1})'.format(end_time_str, end_time)
+        #print 'Number of entries: {0}'.format(end_ind + 1)
+        #for ii, p in enumerate(port_specs):
+            #print 'Channel {0}'.format(ii + 1)
+            #print '  Name: {0}'.format(p.name)
+            #print '  Data type: {0} ({1})'.format(p.type_name, p.type)
+            #print '  Sources:'
+            #for r in p.raw:
+                #print '    {0}'.format(r)
+        info = QtGui.QMessageBox(QtGui.QMessageBox.NoIcon, self.tr('Log information'),
+                log_info, QtGui.QMessageBox.Ok, self)
+        info.exec_()
 
     # Playback control
     def _playpause(self):
@@ -363,11 +459,16 @@ class RTLPWindow(QtGui.QMainWindow):
     # Target management
     def _add_target(self):
         '''Add a new channel target.'''
-        print 'Add target'
+        # Can only call this function when a port is selected
+        tgt = self._tree_view.selectedIndexes()[0]
+        self._log_targets.add_target(self._cur_chan, tgt)
+        self._chan_view.setExpanded(self._cur_chan, True)
 
     def _rem_target(self):
         '''Remove a channel target.'''
-        print 'Remove target'
+        # Can only call this function when a target is selected
+        tgt = self._chan_view.selectedIndexes()[0]
+        self._log_targets.rem_target(self._cur_chan, tgt)
 
 
 # vim: tw=79

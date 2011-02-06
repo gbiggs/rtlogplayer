@@ -21,6 +21,7 @@ Model wrapper around the RTC Tree.
 
 from PySide import QtCore
 from PySide import QtGui
+import rtctree.exceptions
 import rtctree.tree
 
 
@@ -31,13 +32,33 @@ class RTCTree(QtCore.QAbstractItemModel):
         self._root = self._tree.get_node(['/'])
 
     def add_server(self, server):
-        pass
+        row = len(self._root.children)
+        res = None
+        self.beginResetModel()
+        try:
+            self._tree.add_name_server(server)
+        except rtctree.exceptions.InvalidServiceError, e:
+            res = e.args[0]
+        self.endResetModel()
+        return res
+
+    def rem_server(self, index):
+        node = index.internalPointer()
+        row = self._root.children.index(node)
+        self.beginResetModel()
+        self._root.remove_child(node)
+        self.endResetModel()
+
+    def get_path(self, index):
+        if not index.isValid():
+            return []
+        return index.internalPointer().full_path_str
 
     def _get_port_info(self, port):
-        result = ''
+        result = '<html>'
         for k in port.properties.keys():
-            result += '{0}\n    {1}\n'.format(k, port.properties[k])
-        return result[:-1]
+            result += '<b>{0}:</b> {1}<br/>\n'.format(k, port.properties[k])
+        return result[:-1] + '</html>'
 
     def _get_comp_info(self, comp):
         profile_items = [('Category', comp.category),
@@ -57,10 +78,15 @@ class RTCTree(QtCore.QAbstractItemModel):
             profile_items.append(('Type', 'Monolithic composite member'))
         else:
             profile_items.append(('Type', 'Monolithic'))
-        result = ''
+        result = '<html>'
         for item in profile_items:
-            result += '{0}\n    {1}\n'.format(item[0], item[1])
-        return result[:-1]
+            result += '<b>{0}:</b> {1}<br/>'.format(item[0], item[1])
+        return result[:-1] + '</html>'
+
+    def is_nameserver(self, index):
+        if type(index.internalPointer()) == rtctree.nameserver.NameServer:
+            return True
+        return False
 
     def is_port(self, index):
         if type(index.internalPointer()) == rtctree.ports.DataInPort:
@@ -135,16 +161,16 @@ class RTCTree(QtCore.QAbstractItemModel):
         elif role == QtCore.Qt.StatusTipRole:
             obj = index.internalPointer()
             if self.is_port(index):
-                return '{0}:{1} ({2})'.format(obj.owner.full_path, obj.name,
+                return '{0}:{1} ({2})'.format(obj.owner.full_path_str, obj.name,
                         obj.properties['dataport.data_type'])
             else:
-                return obj.full_path
+                return obj.full_path_str
         elif role == QtCore.Qt.ToolTipRole:
             if self.is_port(index):
                 return self._get_port_info(index.internalPointer())
             elif index.internalPointer().is_component:
                 return self._get_comp_info(index.internalPointer())
             else:
-                return obj.full_path
+                return index.internalPointer().full_path_str
         return None
 
