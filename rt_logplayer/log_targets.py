@@ -32,11 +32,11 @@ class LogTargets(QtCore.QAbstractItemModel):
         for ii, c in enumerate(chans):
             self._channels.append(Channel(ii, c.name, c.type_name, c.raw))
 
-    def add_target(self, chan, target):
+    def add_target(self, chan, target, conn_id):
         port = target.internalPointer()
         tgt_row = chan.internalPointer().num_targets
         self.beginInsertRows(chan, tgt_row, tgt_row)
-        chan.internalPointer().add_target(port.owner.full_path, port.name)
+        chan.internalPointer().add_target(port, conn_id)
         self.endInsertRows()
 
     def rem_target(self, chan, target):
@@ -64,7 +64,7 @@ class LogTargets(QtCore.QAbstractItemModel):
         if not index.isValid():
             # Root
             return QtCore.QModelIndex()
-        if index.internalPointer().parent:
+        elif index.internalPointer().parent:
             # Target
             chan = index.internalPointer().parent
             return self.createIndex(self._channels.index(chan), 0, chan)
@@ -128,8 +128,8 @@ class Channel(object):
     def __str__(self):
         return self.name + '->' + str(self.targets)
 
-    def add_target(self, path, port):
-        self._targets.append(Target(path, port, self))
+    def add_target(self, port, conn_id):
+        self._targets.append(Target(port, conn_id, self))
 
     def rem_target(self, target):
         self._targets.remove(target)
@@ -164,14 +164,12 @@ class Channel(object):
 
 
 class Target(object):
-    def __init__(self, path, port, parent):
-        self._path = path
+    def __init__(self, port, conn_id, parent):
         self._port = port
+        self._conn_id = conn_id
         self._parent = parent
-        self._short = path[-1] + ':' + port
-        if path[0] == '/':
-            path = path[1:]
-        self._full = '/' + '/'.join(path) + ':' + port
+        self._short = port.owner.full_path[-1] + ':' + port.name
+        self._full = port.owner.full_path_str + ':' + port.name
 
     def __str__(self):
         return self.full
@@ -180,16 +178,24 @@ class Target(object):
         return self.full
 
     @property
-    def parent(self):
-        return self._parent
-
-    @property
-    def short(self):
-        return self._short
+    def conn_id(self):
+        return self._conn_id
 
     @property
     def full(self):
         return self._full
+
+    @property
+    def parent(self):
+        return self._parent
+
+    @property
+    def port(self):
+        return self._port
+
+    @property
+    def short(self):
+        return self._short
 
 
 # vim: tw=79

@@ -26,10 +26,14 @@ import rtctree.tree
 
 
 class RTCTree(QtCore.QAbstractItemModel):
-    def __init__(self, parent=None):
+    def __init__(self, servers=[], parent=None):
         super(RTCTree, self).__init__(parent)
-        self._tree = rtctree.tree.RTCTree()
+        self._tree = rtctree.tree.RTCTree(servers=servers)
         self._root = self._tree.get_node(['/'])
+
+    @property
+    def tree(self):
+        return self._tree
 
     def add_server(self, server):
         row = len(self._root.children)
@@ -48,6 +52,9 @@ class RTCTree(QtCore.QAbstractItemModel):
         self.beginResetModel()
         self._root.remove_child(node)
         self.endResetModel()
+
+    def release_orb(self):
+        self._tree.give_away_orb()
 
     def get_path(self, index):
         if not index.isValid():

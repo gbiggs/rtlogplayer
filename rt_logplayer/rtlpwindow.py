@@ -20,12 +20,19 @@ Main window implementation.
 
 
 import math
-import os
+import OpenRTM_aist
 from PySide import QtCore
 from PySide import QtGui
-import time
+import RTC
+import rtctree.exceptions
+import rtctree.utils
+import rtshell.comp_mgmt
+import rtshell.modmgr
+import sys
 
+import facade_comp
 import ilog
+import log_info
 import log_targets
 import simpkl_log
 import rtctree_mdl
@@ -47,6 +54,11 @@ class RTLPWindow(QtGui.QMainWindow):
         self._tree = None
         # Stores the index of the currently-selected channel
         self._cur_chan = None
+        # The module manager
+        self._mm = rtshell.modmgr.ModuleMgr()
+        # An ever-increasing counter to track connections
+        self._id_cnt = 0
+
         self.setWindowTitle('RTLogPlayer')
         self.setObjectName('RTLogPlayer')
         self._make_actions()
@@ -93,7 +105,7 @@ class RTLPWindow(QtGui.QMainWindow):
         self._add_ns_act.setStatusTip(self.tr('Add a name server to the RTC '
             'Tree'))
         self._add_ns_act.setIcon(self.style().standardIcon(
-            QtGui.QStyle.SP_FileDialogNewFolder))
+            QtGui.QStyle.SP_ComputerIcon))
         self._add_ns_act.triggered.connect(self._add_ns)
         self._add_ns_act.setEnabled(False)
 
@@ -107,6 +119,25 @@ class RTLPWindow(QtGui.QMainWindow):
         self._rem_ns_act.triggered.connect(self._rem_ns)
         self._rem_ns_act.setEnabled(False)
 
+        self._add_path_act = QtGui.QAction(self.tr('Add &module path'), self)
+        self._add_path_act.setShortcuts([QtGui.QKeySequence(
+            QtCore.Qt.CTRL + QtCore.Qt.Key_M)])
+        self._add_path_act.setStatusTip(self.tr('Add a path to the module '
+            'search path'))
+        self._add_path_act.setIcon(self.style().standardIcon(
+            QtGui.QStyle.SP_FileDialogNewFolder))
+        self._add_path_act.triggered.connect(self._add_mod_path)
+
+        self._load_mod_act = QtGui.QAction(self.tr('&Load Python module'),
+                self)
+        self._load_mod_act.setShortcuts([QtGui.QKeySequence(
+            QtCore.Qt.CTRL + QtCore.Qt.Key_L)])
+        self._load_mod_act.setStatusTip(self.tr('Load a Python module '
+            'containing a data type'))
+        self._load_mod_act.setIcon(self.style().standardIcon(
+            QtGui.QStyle.SP_FileIcon))
+        self._load_mod_act.triggered.connect(self._load_mod)
+
         self._tb = self.addToolBar(self.tr('Log'))
         self._tb.setObjectName('Toolbar')
         self._tb.addAction(self._open_act)
@@ -115,6 +146,9 @@ class RTLPWindow(QtGui.QMainWindow):
         self._tb.addSeparator()
         self._tb.addAction(self._add_ns_act)
         self._tb.addAction(self._rem_ns_act)
+        self._tb.addSeparator()
+        self._tb.addAction(self._add_path_act)
+        self._tb.addAction(self._load_mod_act)
         self._tb.addSeparator()
         self._tb.addAction(self._exit_act)
         self._tb.setAllowedAreas(QtCore.Qt.TopToolBarArea)
@@ -281,15 +315,44 @@ class RTLPWindow(QtGui.QMainWindow):
             self._rewind_btn.setEnabled(True)
             self._tl.setEnabled(True)
 
+    def closeEvent(self, event):
+        if self._log:
+            self._close_log()
+        event.accept()
+
+    def _add_mod_path(self):
+        path = QtGui.QFileDialog.getExistingDirectory(self,
+            self.tr('Select module path'))
+        if path:
+            sys.path.insert(0, path)
+
+    def _load_mod(self):
+        mod, ok = QtGui.QInputDialog.getText(self, self.tr('Load Python odule'),
+                self.tr('Module name:'), text='')
+        if not ok:
+            return
+        self._mm.load_mods_and_poas([mod])
+
     def _add_ns(self):
         ns, ok = QtGui.QInputDialog.getText(self, self.tr('Add name server'),
                 self.tr('Address:'), text='localhost')
         if ok:
-            res = self._tree.add_server(ns)
-            if res:
-                QtGui.QMessageBox.warning(self, self.tr('Add name server'),
-                    self.tr('Invalid CORBA naming service: '
-                        '{0}').format(res))
+            if not self._tree:
+                self._make_tree(ns)
+            else:
+                res = self._tree.add_server(ns)
+                if res:
+                    QtGui.QMessageBox.warning(self, self.tr('Add name server'),
+                        self.tr('Invalid CORBA naming service: '
+                            '{0}').format(res))
+
+    def _make_tree(self, servers=[]):
+        try:
+            self._tree = rtctree_mdl.RTCTree(servers=servers)
+        except rtctree.exceptions.InvalidServiceError, e:
+            QtGui.QMessageBox.warning(self, self.tr('Load RTC Tree'),
+                self.tr('Invalid CORBA naming service: {0}').format(e.args[0]))
+            self._tree = None
 
     def _rem_ns(self):
         ns = self._tree_view.selectedIndexes()[0]
@@ -358,72 +421,56 @@ class RTLPWindow(QtGui.QMainWindow):
         self._log = simpkl_log.SimplePickleLog(filename=fn[0], mode='r')
         self._log_targets = log_targets.LogTargets(self._log, parent=self)
         self._chan_view.setModel(self._log_targets)
-        self._tree = rtctree_mdl.RTCTree()
+        self._make_tree()
         self._tree_view.setModel(self._tree)
         self._update_timeline()
+        self._setup_player()
         self._enable_ui(self.STOPPED)
 
     def _close_log(self):
+        print 'closing'
         self._chan_view.setModel(None)
         self._tree_view.setModel(None)
+        self._destroy_player()
+        print 'destroyed'
         self._log_targets = None
         self._log = None
         self._tree = None
         self._update_timeline()
         self._enable_ui(self.NO_FILE)
+        print 'closed'
 
     def _show_log_info(self):
         '''Show the log file's information.'''
-        statinfo = os.stat(self._log_fn)
-        size = statinfo.st_size
-        if size > 1024 * 1024 * 1024: # GiB
-            size_str = '{0:.2f}GiB ({1}B)'.format(size / (1024.0 * 1024 * 1024), size)
-        elif size > 1024 * 1024: # MiB
-            size_str = '{0:.2f}MiB ({1}B)'.format(size / (1024.0 * 1024), size)
-        elif size > 1024: # KiB
-            size_str = '{0:.2f}KiB ({1}B)'.format(size / 1024.0, size)
-        else:
-            size_str = '{0}B'.format(size)
+        info_dlg = log_info.LogInfoDlg(self._log, self._log_fn, parent=self)
+        info_dlg.exec_()
 
-        start_time, port_specs = self._log.metadata
-        start_time_str = time.strftime('%Y-%m-%d %H:%M:%S',
-                time.localtime(start_time))
-        first_ind, first_time = self._log.start
-        first_time_str = time.strftime('%Y-%m-%d %H:%M:%S',
-                time.localtime(first_time.float))
-        end_ind, end_time = self._log.end
-        end_time_str = time.strftime('%Y-%m-%d %H:%M:%S',
-                time.localtime(end_time.float))
+    # Playback functionality
+    def _make_facade(self, port_specs=[]):
+        '''Creates an empty component to provide the ports for playback.'''
+        comp_name, self._mgr = rtshell.comp_mgmt.make_comp('rtlp_player',
+                self._tree.tree, facade_comp.Facade, port_specs)
+        self._comp = rtshell.comp_mgmt.find_comp_in_mgr(comp_name, self._mgr)
 
-        log_info = '<html><b>' + self._log_fn + '</b><br/>'
-        log_info += '<table>'
-        log_info += '<tr><td>Size</td><td>' + size_str + '</td></tr>'
-        log_info += '<tr><td>Start time</td><td>{0} ({1})'.format(
-            start_time_str, start_time) + '</td></tr>'
-        log_info += '<tr><td>First entry time</td><td>{0} ({1})'.format(
-            first_time_str, first_time) + '</td></tr>'
-        log_info += '<tr><td>End time</td><td>{0} ({1})'.format(
-            end_time_str, end_time) + '</td></tr>'
-        log_info += '<tr><td>Number of entries</td><td>{0}'.format(
-                end_ind + 1) + '</td></tr>'
-        log_info += '</table><br/><b>Channels</b></html>'
+    def _del_facade(self):
+        '''Deletes the facade component.'''
+        self._comp = None
+        self._tree.release_orb()
+        rtshell.comp_mgmt.shutdown(self._mgr)
+        self._mgr = None
 
-        #print 'Name: {0}'.format(self._log_fn)
-        #print 'Size: ' + size_str
-        #print 'Start time: {0} ({1})'.format(start_time_str, start_time)
-        #print 'First entry time: {0} ({1})'.format(first_time_str, first_time)
-        #print 'End time: {0} ({1})'.format(end_time_str, end_time)
-        #print 'Number of entries: {0}'.format(end_ind + 1)
-        #for ii, p in enumerate(port_specs):
-            #print 'Channel {0}'.format(ii + 1)
-            #print '  Name: {0}'.format(p.name)
-            #print '  Data type: {0} ({1})'.format(p.type_name, p.type)
-            #print '  Sources:'
-            #for r in p.raw:
-                #print '    {0}'.format(r)
-        info = QtGui.QMessageBox(QtGui.QMessageBox.NoIcon, self.tr('Log information'),
-                log_info, QtGui.QMessageBox.Ok, self)
-        info.exec_()
+    def _setup_player(self):
+        '''Creates the facade component and the playback thread.'''
+        def to_output(ps):
+            ps._input = False
+
+        st, chans = self._log.metadata
+        specs = [to_output(c) for c in chans]
+        self._make_facade(port_specs=chans)
+
+    def _destroy_player(self):
+        '''Stops the playback thread and destroys the facade component.'''
+        self._del_facade()
 
     # Playback control
     def _playpause(self):
@@ -461,14 +508,48 @@ class RTLPWindow(QtGui.QMainWindow):
         '''Add a new channel target.'''
         # Can only call this function when a port is selected
         tgt = self._tree_view.selectedIndexes()[0]
-        self._log_targets.add_target(self._cur_chan, tgt)
+        # Connect the component
+        res, conn_id = self._connect_port(tgt.internalPointer())
+        if not res:
+            return
+        # Update the RTC Tree object's connections list
+        tgt.internalPointer().reparse()
+        # Add the target to the tree
+        self._log_targets.add_target(self._cur_chan, tgt, conn_id)
         self._chan_view.setExpanded(self._cur_chan, True)
 
     def _rem_target(self):
         '''Remove a channel target.'''
         # Can only call this function when a target is selected
         tgt = self._chan_view.selectedIndexes()[0]
+        conn = tgt.internalPointer().port.get_connection_by_id(
+                tgt.internalPointer().conn_id)
+        conn.disconnect()
         self._log_targets.rem_target(self._cur_chan, tgt)
+
+    def _connect_port(self, tgt):
+        '''Make the connection to another component's port.'''
+        def find_local_port(name, ports):
+            for p in ports:
+                if p.get_port_profile().name.split('.')[-1] == name:
+                    return p
+
+        props = {'dataport.dataflow_type': 'push',
+                'dataport.interface_type': 'corba_cdr',
+                'dataport.subscription_type': 'new',
+                'dataport.data_type': tgt.properties['dataport.data_type']}
+        local_name = self._cur_chan.internalPointer().name
+        local_port = find_local_port(local_name, self._comp.get_ports())
+        id = '{0}'.format(self._id_cnt)
+        self._id_cnt += 1
+        prof = RTC.ConnectorProfile(local_name + '_' + tgt.name, id,
+                [local_port, tgt.object], rtctree.utils.dict_to_nvlist(props))
+        res, connector = local_port.connect(prof)
+        if res != RTC.RTC_OK:
+            QtGui.QMessageBox.warning(self, self.tr('Add target'),
+                    self.tr('Failed to create connection.'))
+            return False, 0
+        return True, id
 
 
 # vim: tw=79
