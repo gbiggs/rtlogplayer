@@ -428,17 +428,14 @@ class RTLPWindow(QtGui.QMainWindow):
         self._enable_ui(self.STOPPED)
 
     def _close_log(self):
-        print 'closing'
         self._chan_view.setModel(None)
         self._tree_view.setModel(None)
         self._destroy_player()
-        print 'destroyed'
         self._log_targets = None
         self._log = None
         self._tree = None
         self._update_timeline()
         self._enable_ui(self.NO_FILE)
-        print 'closed'
 
     def _show_log_info(self):
         '''Show the log file's information.'''
@@ -467,9 +464,12 @@ class RTLPWindow(QtGui.QMainWindow):
         st, chans = self._log.metadata
         specs = [to_output(c) for c in chans]
         self._make_facade(port_specs=chans)
+        self._log_player = log_player.LogPlayer(self._log)
 
     def _destroy_player(self):
         '''Stops the playback thread and destroys the facade component.'''
+        self._log_player.stop()
+        self._log_player.wait()
         self._del_facade()
 
     # Playback control

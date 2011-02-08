@@ -32,11 +32,6 @@ class Facade(rtshell.gen_comp.GenComp):
     def _behv(self, ec_id):
         return RTC.RTC_OK, 0
 
-    def add_conn(self, tgt, chan):
-        print tgt
-        print chan
-        return 1
-
     @property
     def ports(self):
         return self._ports
