@@ -29,10 +29,12 @@ import rtctree.utils
 import rtshell.comp_mgmt
 import rtshell.modmgr
 import sys
+import time
 
 import facade_comp
 import ilog
 import log_info
+import log_player
 import log_targets
 import simpkl_log
 import rtctree_mdl
@@ -48,6 +50,8 @@ class RTLPWindow(QtGui.QMainWindow):
         # Stores the loaded log file
         self._log = None
         self._log_fn = None
+        # Plays the log file
+        self._log_player = None
         # The model representing channels and targets in the log
         self._log_targets = None
         # The model wrapper for the RTC Tree
@@ -209,11 +213,11 @@ class RTLPWindow(QtGui.QMainWindow):
         self._play_btn.setShortcut(QtGui.QKeySequence(
             QtCore.Qt.Key_Space))
         self._play_btn.setStatusTip(self.tr('Start playback'))
-        self._play_btn.clicked.connect(self._playpause)
+        self._play_btn.clicked.connect(self._play)
         self._play_btn.setEnabled(False)
         row.addWidget(self._play_btn)
         self._stop_btn = QtGui.QPushButton(self.style().standardIcon(
-            QtGui.QStyle.SP_MediaPause), '')
+            QtGui.QStyle.SP_MediaStop), '')
         self._play_btn.setObjectName('StopBtn')
         self._stop_btn.setStatusTip(self.tr('Stop playback'))
         self._stop_btn.clicked.connect(self._stop)
@@ -395,14 +399,17 @@ class RTLPWindow(QtGui.QMainWindow):
 
     def _update_timeline(self):
         if self._log:
-            start = int(math.floor(0))
-            end = int(math.ceil(self._log.end[1].float -
-                self._log.start[1].float))
+            start = self._log.start[1].float
+            end = self._log.end[1].float
+            self._start_lbl.setText(time.strftime('%Y%m%d\n%H:%M:%S',
+                    time.localtime(start)))
+            self._end_lbl.setText(time.strftime('%Y%m%d\n%H:%M:%S',
+                    time.localtime(end)))
         else:
             start = 0
             end = 0
-        self._start_lbl.setText('{0}'.format(start))
-        self._end_lbl.setText('{0}'.format(end))
+            self._start_lbl.setText('-')
+            self._end_lbl.setText('-')
         self._tl.setMinimum(start)
         self._tl.setMaximum(end)
         self._tl.setTickInterval((end - start) / 15)
@@ -411,10 +418,9 @@ class RTLPWindow(QtGui.QMainWindow):
     # Log file management
     def _open_log(self):
         '''Open a log file.'''
-        #fn = QtGui.QFileDialog.getOpenFileName(parent=self,
-            #caption=self.tr('Open log file'),
-            #filter=self.tr('OpenRTM log files (*.rtlog)'))
-        fn = ['/home/geoff/research/src/rtlogplayer/test.rtlog']
+        fn = QtGui.QFileDialog.getOpenFileName(parent=self,
+            caption=self.tr('Open log file'),
+            filter=self.tr('OpenRTM log files (*.rtlog)'))
         if not fn[0]:
             return
         self._log_fn = fn[0]
@@ -425,6 +431,7 @@ class RTLPWindow(QtGui.QMainWindow):
         self._tree_view.setModel(self._tree)
         self._update_timeline()
         self._setup_player()
+        self._set_sb_time('Log position', self._log.start[1].float)
         self._enable_ui(self.STOPPED)
 
     def _close_log(self):
@@ -464,43 +471,57 @@ class RTLPWindow(QtGui.QMainWindow):
         st, chans = self._log.metadata
         specs = [to_output(c) for c in chans]
         self._make_facade(port_specs=chans)
-        self._log_player = log_player.LogPlayer(self._log)
+        self._log_player = log_player.LogPlayer(self._log, self._comp)
+        self._log_player.finished.connect(self._playback_done)
+        self._log_player.pos_update.connect(self._pos_update)
 
     def _destroy_player(self):
         '''Stops the playback thread and destroys the facade component.'''
         self._log_player.stop()
         self._log_player.wait()
+        self._log_player = None
         self._del_facade()
 
+    def _playback_done(self):
+        self._enable_ui(self.STOPPED)
+
+    def _pos_update(self, new_pos):
+        self._tl.setValue(new_pos)
+        self._set_sb_time('Log position', new_pos)
+
+    def _set_sb_time(self, msg, new_pos):
+        self._sb_time.setText('{0}: {1}'.format(msg, time.strftime(
+            '%Y%m%d %H:%M:%S', time.localtime(new_pos))))
+
     # Playback control
-    def _playpause(self):
-        '''Plays or pauses playback.'''
-        print 'Play/pause'
+    def _play(self):
+        '''Starts playback.'''
         self._enable_ui(self.PLAYING)
+        self._log_player.start()
 
     def _rewind(self):
         '''Rewind the log file.'''
-        print 'Rewind'
+        self._log_player.rewind()
 
     def _scan(self, pos):
         '''Show the current scanning position.'''
-        self._sb_time.setText('Skip to: {0}'.format(pos))
+        self._set_sb_time('Skip to', pos)
 
     def _skip_back(self):
         '''Skip backwards 60 seconds.'''
-        print 'Skip backward'
+        self._log_player.skip_back()
 
     def _skip_fwd(self):
         '''Skip forwards 60 seconds.'''
-        print 'Skip forward'
+        self._log_player.skip_forward()
 
     def _skip_to(self):
         '''Skip the log to a specified point.'''
-        self._sb_time.setText('Log position: {0}'.format(self._tl.value()))
+        self._log_player.skip_to(self._tl.value())
 
     def _stop(self):
         '''Stop playback.'''
-        print 'Stop'
+        self._log_player.stop()
         self._enable_ui(self.STOPPED)
 
     # Target management
