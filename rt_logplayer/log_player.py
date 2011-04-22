@@ -107,7 +107,7 @@ class LogPlayer(QtCore.QThread):
                 flags = self._check_flags()
                 if flags == self.STOP:
                     # A stop flag was set
-                    self.pos_update.emit(self._l.end.float)
+                    self.pos_update.emit(self._l.end[1].float)
                     return
                 elif flags == self.JUMP:
                     # The user has changed the log position
@@ -115,7 +115,7 @@ class LogPlayer(QtCore.QThread):
                 else:
                     # Sleep until the next entry
                     if not self._wait_for_next():
-                        self.pos_update.emit(self._l.end.float)
+                        self.pos_update.emit(self._l.end[1].float)
                         return
         except:
             traceback.print_exc()

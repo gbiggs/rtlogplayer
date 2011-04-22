@@ -4,7 +4,7 @@
 
 '''rtshell
 
-Copyright (C) 2009-2010
+Copyright (C) 2009-2011
     Geoffrey Biggs
     RT-Synthesis Research Group
     Intelligent Systems Research Institute,
@@ -22,6 +22,7 @@ Pickle-based log.
 import copy
 import os
 import pickle
+import traceback
 
 import ilog
 
@@ -60,6 +61,8 @@ class SimplePickleLog(ilog.Log):
     DATA = 2
     FP = 3
     PREV = 4
+    # Spare space at the start for pointers
+    BUFFER_SIZE = 256
 
     def __init__(self, filename='', *args, **kwargs):
         self._is_open = False
@@ -78,8 +81,13 @@ class SimplePickleLog(ilog.Log):
 
     def write(self, timestamp, data):
         val = (self._write_ind, timestamp, data, self._file.tell(), self._prev_pos)
+        # Track the start of the last entry for later writing at the file start
+        self._cur_pos.ts = timestamp
+        self._end = copy.copy(self._cur_pos)
+        # Record the new "previous" position before writing
         self._prev_pos = self._file.tell()
         self._write(val)
+        # Update the current position to after the new final record
         self._cur_pos.index = val[self.INDEX] + 1
         self._cur_pos.ts = -1
         self._cur_pos.prev = self._prev_pos
@@ -117,12 +125,7 @@ class SimplePickleLog(ilog.Log):
         self._vb_print('New current position: {0}.'.format(self._cur_pos))
 
     def _backup_one(self):
-        '''Reverses in the log one entry.
-
-        This function is neither fast nor efficient. It involves stepping back
-        one byte at a time to find the start of the previous entry.
-
-        '''
+        '''Reverses in the log one entry.'''
         self._vb_print('Backing up one entry from {0}.'.format(self._cur_pos))
         if self._cur_pos.index == 0:
             # Already at the start
@@ -141,11 +144,17 @@ class SimplePickleLog(ilog.Log):
     def _close(self):
         if not self._is_open:
             return
-        self._file.close()
-        self._is_open = False
-        self._start = None
-        self._end = None
-        self._vb_print('Closed file.')
+        if self._mode == 'w':
+            # Go back to the beginning and write the end position
+            self._file.seek(0)
+            self._file.seek(self._buf_start) # Skip the meta data
+            self._write(self._end)
+            self._vb_print('Wrote end pointer: {0}'.format(self._end))
+            self._file.close()
+            self._is_open = False
+            self._start = None
+            self._end = None
+            self._vb_print('Closed file.')
 
     def _eof(self):
         return self._next is None
@@ -161,8 +170,6 @@ class SimplePickleLog(ilog.Log):
         return (self._start.index, self._start.ts)
 
     def _get_end(self):
-        if self._end is None:
-            self._set_end()
         self._vb_print('End position: {0}'.format(self._end))
         return (self._end.index, self._end.ts)
 
@@ -171,19 +178,33 @@ class SimplePickleLog(ilog.Log):
             self._vb_print('Initialising log for reading.')
             # Read out the metadata
             self._meta = self._read()
+            pos = self._file.tell()
+            # Read the end marker
+            self._end = self._read()
+            # Skip to the start of the data
+            self._file.seek(pos + self.BUFFER_SIZE)
+            self._vb_print('Read end position: {0}'.format(self._end))
             # Grab the position of the first entry and make it the current
             self._set_start()
             self._cur_pos = copy.copy(self._start)
-            self._end = None
             # Get the first entry
             self._next = self._read()
         else:
             self._vb_print('Initialising log for writing.')
             # Write the metadata
             self._write(self._meta)
+            self._vb_print('Wrote meta data of length {0}'.format(
+                self._file.tell()))
+            self._buf_start = self._file.tell()
+            # Put some blank space to write the end marker
+            self._file.write(''.ljust(self.BUFFER_SIZE))
+            self._vb_print('Wrote buffer of length {0} at position {1}'.format(
+                self.BUFFER_SIZE, self._buf_start))
             self._write_ind = 0
             self._prev_pos = 0
             self._cur_pos = CurPos(file_pos=self._file.tell())
+            self._vb_print('First entry will be written at {0}'.format(
+                self._cur_pos))
 
     def _open(self):
         if self._is_open:
@@ -343,47 +364,6 @@ class SimplePickleLog(ilog.Log):
                     break # EOF
         self._vb_print('New current position is {0}.'.format(self._cur_pos))
 
-    def _set_end(self):
-        # TODO: Store a pointer to the final entry at the start of the file so
-        # it can be retrieved instantly.
-        # Save the current position
-        current = self._file.tell()
-        # Move to the end of the file
-        self._file.seek(-1, os.SEEK_END)
-        # Begin searching backwards
-        offset = 0
-        pos = 0
-        while True:
-            self._file.seek(offset, os.SEEK_END)
-            try:
-                pos = self._file.tell()
-                entry = self._read()
-            except KeyError:
-                offset -= 1
-                continue
-            except IndexError:
-                offset -= 1
-                continue
-            except EOFError:
-                offset -= 1
-                continue
-            except TypeError:
-                offset -= 1
-                continue
-            except ImportError:
-                offset -= 1
-                continue
-            except ValueError:
-                offset -= 1
-                continue
-            break
-        self._end = CurPos(index=entry[self.INDEX], timestamp=entry[self.TS],
-                prev_pos=entry[self.PREV], cache=pos - 2,
-                file_pos=self._file.tell())
-        # Restore the file position
-        self._file.seek(current)
-        self._vb_print('Measured end position: {0}'.format(self._end))
-
     def _set_eof_pos(self):
         '''Sets the current position to the end-of-file value.'''
         self._vb_print('Setting EOF at file position {0}, prev cur pos '\
@@ -401,6 +381,8 @@ class SimplePickleLog(ilog.Log):
         self._file.seek(0)
         # Skip the metadata block
         self._read()
+        # Skip the buffer
+        self._file.seek(self.BUFFER_SIZE, os.SEEK_CUR)
         # Read the first entry
         pos = self._file.tell()
         entry = self._read()
