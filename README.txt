@@ -11,12 +11,9 @@ you can change the target components to which data is sent and jump to
 any position in the log file.
 
 This software is developed at the National Institute of Advanced
-Industrial Science and Technology. Approval number
-. The development was financially supported by
-the New Energy and Industrial Technology Development Organisation
-Project for Strategic Development of Advanced Robotics Elemental
-Technologies.  This software is licensed under the Eclipse Public
-License -v 1.0 (EPL). See LICENSE.txt.
+Industrial Science and Technology. Approval number H23PRO-????.  This
+software is licensed under the Lesser General Public License. See
+COPYING and COPYING.LESSER in the source.
 
 
 Requirements
