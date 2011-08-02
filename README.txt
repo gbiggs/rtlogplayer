@@ -11,7 +11,7 @@ you can change the target components to which data is sent and jump to
 any position in the log file.
 
 This software is developed at the National Institute of Advanced
-Industrial Science and Technology. Approval number H23PRO-????.  This
+Industrial Science and Technology. Approval number H23PRO-1300. This
 software is licensed under the Lesser General Public License. See
 COPYING and COPYING.LESSER in the source.
 
